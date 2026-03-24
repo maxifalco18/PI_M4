@@ -3,10 +3,10 @@ name: Deploy DAGs to EC2
 on:
   push:
     branches:
-      - main
+      - dev
     paths:
-      - 'orchestration/dags/**'
-      - 'dags/**'
+      - "orchestration/dags/**"
+      - "dags/**"
 
 jobs:
   deploy:

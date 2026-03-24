@@ -1,0 +1,27 @@
+{
+  "Rules": [
+    {
+      "ID": "raw-batch-to-glacier-90d",
+      "Filter": { "Prefix": "raw/batch/" },
+      "Status": "Enabled",
+      "Transitions": [
+        { "Days": 90, "StorageClass": "GLACIER_IR" }
+      ]
+    },
+    {
+      "ID": "raw-streaming-to-ia-30d-expire-365d",
+      "Filter": { "Prefix": "raw/streaming/" },
+      "Status": "Enabled",
+      "Transitions": [
+        { "Days": 30, "StorageClass": "STANDARD_IA" }
+      ],
+      "Expiration": { "Days": 365 }
+    },
+    {
+      "ID": "checkpoints-expire-30d",
+      "Filter": { "Prefix": "_checkpoints/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 30 }
+    }
+  ]
+}

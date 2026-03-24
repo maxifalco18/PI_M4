@@ -1,0 +1,180 @@
+================================================================================
+AUDITORÍA: PARTICIONAMIENTO, ESCALABILIDAD Y EFICIENCIA DE LECTURA
+================================================================================
+Fecha: 2026-03-24
+Bucket: pi-m4-datalake-maxi
+Arquitectura: Medallion (Raw → Processed/Silver → Gold)
+
+================================================================================
+1. DIAGNÓSTICO DE LA CAPA RAW (ESTADO ACTUAL)
+================================================================================
+
+Tabla                          | Archivos | Tamaño   | Formato  | Particionado
+-------------------------------|----------|----------|----------|--------------
+olist_customers                | 2        | ~23 MB   | Parquet  | NO
+olist_geolocation              | 2        | ~189 MB  | Parquet  | NO ⚠️
+olist_order_items              | 2        | ~24 MB   | Parquet  | NO
+olist_order_payments           | 2        | ~18 MB   | Parquet  | NO
+olist_order_reviews            | 2        | ~25 MB   | Parquet  | NO
+olist_orders                   | 2        | ~25 MB   | Parquet  | NO
+olist_products                 | 2        | ~13 MB   | Parquet  | NO
+olist_sellers                  | 2        | ~10 MB   | Parquet  | NO
+weather (JSON histórico)       | 2        | ~7 MB    | JSON     | NO
+category_translation           | 0        | 0        | -        | FALTANTE ⚠️
+
+TOTAL RAW: ~334 MB
+
+Veredicto RAW: ✅ CORRECTO. La capa Raw NO debe estar particionada. 
+Los datos se guardan "as-is" (inmutables). Airbyte los deposita tal cual llegan.
+Esto cumple con el principio de "Fuente de la Verdad" del documento de arquitectura.
+
+================================================================================
+2. DIAGNÓSTICO DE LA CAPA PROCESSED/SILVER (ESTADO ACTUAL)
+================================================================================
+
+Tabla                   | Particionado      | Tamaño   | Observación
+------------------------|-------------------|----------|---------------------------
+fact_orders             | year=*/month=*    | ~40 MB   | ✅ Bien particionado
+fact_payments           | NO                | ~3.7 MB  | ⚠️ Sin partición
+fact_reviews            | NO                | ~8 MB    | ⚠️ Sin partición
+dim_customers           | NO EXISTE         | -        | ❌ FALTA
+dim_products            | NO EXISTE         | -        | ❌ FALTA
+dim_sellers             | NO EXISTE         | -        | ❌ FALTA
+dim_geolocation         | NO EXISTE         | -        | ❌ FALTA
+weather_enriched        | NO EXISTE         | -        | ❌ FALTA
+
+Veredicto SILVER: ⚠️ INCOMPLETO. Solo hay 3 de 8 tablas esperadas.
+Faltan todas las tablas de dimensiones y la integración del clima.
+
+================================================================================
+3. ESTRATEGIA DE PARTICIONAMIENTO PROPUESTA (SILVER)
+================================================================================
+
+Principio: Particionar según los filtros más usados en las preguntas de negocio.
+
+TABLAS DE HECHOS (Facts) — Particionadas por tiempo:
+─────────────────────────────────────────────────────
+  fact_orders           → partBy: year, month
+                          Motivo: "¿Cómo varía la demanda a lo largo del tiempo?"
+                                  "¿Comportamiento frente a estacionalidad?"
+                          Beneficio: Athena/Spark solo lee 1 mes en vez de todo.
+
+  fact_order_items      → partBy: year, month (heredado de order_purchase_timestamp)
+                          Motivo: "¿Productos más vendidos por categoría y tiempo?"
+
+  fact_payments         → partBy: payment_type
+                          Motivo: "¿Desempeño de ventas por método de pago?"
+                          Beneficio: Queries sobre "boleto" no leen "credit_card".
+
+  fact_reviews          → partBy: review_score
+                          Motivo: Separar reseñas positivas (4-5) de negativas (1-2)
+                          para análisis de satisfacción por segmento.
+
+
+TABLAS DE DIMENSIONES (Dims) — SIN particionar:
+────────────────────────────────────────────────
+  dim_customers         → Sin partición (tabla pequeña, ~99K registros)
+  dim_products          → Sin partición (tabla pequeña, ~33K registros)
+  dim_sellers           → Sin partición (tabla pequeña, ~3K registros)
+  dim_categories        → Sin partición (tabla muy pequeña, ~71 registros)
+  dim_geolocation       → partBy: geolocation_state ⚠️ EXCEPCIÓN
+                          Motivo: Es la tabla más grande (1M+ registros).
+                          Particionar por estado (27 estados brasileños) reduce
+                          el scan en 96% cuando se filtra por región.
+
+
+TABLA ENRIQUECIDA (Weather → Silver):
+─────────────────────────────────────
+  weather_enriched      → Sin partición (dataset pequeño, ~7 MB)
+                          Se limpia el JSON y se guarda como Parquet con schema.
+
+================================================================================
+4. ESTRATEGIA DE PARTICIONAMIENTO PROPUESTA (GOLD)
+================================================================================
+
+La capa Gold responde DIRECTAMENTE a las preguntas de negocio.
+Cada tabla Gold es una "One Big Table" (OBT) pre-agregada.
+
+Tabla Gold                              | partBy          | Pregunta que responde
+----------------------------------------|-----------------|----------------------------------------
+gold_sales_by_category_time             | year, month     | Productos más vendidos por categoría
+gold_customer_frequency                 | (sin partición) | Frecuencia de compra y ticket promedio
+gold_revenue_by_region                  | customer_state  | Regiones con mayores ingresos
+gold_new_vs_returning_customers         | year, month     | Clientes nuevos vs recurrentes
+gold_price_vs_volume                    | (sin partición) | Relación precio-volumen por categoría
+gold_payment_performance                | payment_type    | Desempeño por método de pago
+gold_product_profitability              | (sin partición) | Márgenes de rentabilidad
+
+================================================================================
+5. OPTIMIZACIONES DE EFICIENCIA DE LECTURA
+================================================================================
+
+A) FORMATO Y COMPRESIÓN
+   - Formato: Parquet (columnar) en TODAS las capas Silver y Gold.
+   - Compresión: Snappy (balance velocidad/ratio). Ya configurado.
+   - Beneficio: Athena cobra por bytes escaneados. Parquet columnar + Snappy
+                reduce el costo en ~90% vs JSON/CSV.
+
+B) COLUMNAR PRUNING (Predicate Pushdown)
+   - Al leer con Spark: usar .select() con solo las columnas necesarias.
+   - Al consultar con Athena: SELECT col1, col2 (nunca SELECT *).
+   - Parquet almacena metadata de min/max por columna; Spark/Athena
+     pueden saltear bloques enteros si el filtro no aplica.
+
+C) CONTROL DE PARTICIONES SPARK
+   - Problema: Spark por defecto usa 200 particiones de shuffle.
+   - Solución: spark.conf.set("spark.sql.shuffle.partitions", "8")
+     Motivo: Con ~100K-1M registros, 8 particiones es óptimo.
+             200 particiones generarían archivos de ~1 KB (ineficiente).
+
+D) BROADCAST JOIN (para tablas de dimensión)
+   - Las tablas dim_products (~13 MB), dim_sellers (~10 MB), dim_categories (~1 KB)
+     deben usarse con broadcast() en los JOINs.
+   - Esto evita shuffle: Spark copia la tabla pequeña a cada worker
+     en vez de redistribuir la tabla grande.
+   - Ejemplo: df_orders.join(broadcast(df_products), "product_id")
+
+E) CACHE ESTRATÉGICO
+   - Cachear dim_customers y dim_products después del primer .read()
+     porque se usan en múltiples JOINs (facts → dims).
+   - NO cachear fact_orders (es la más grande y podría causar OOM).
+
+F) COALESCE vs REPARTITION
+   - Al escribir a S3, usar .coalesce(4) en vez de .repartition(4).
+   - Coalesce no genera shuffle; repartition sí.
+   - 4 archivos por partición es el sweet spot para este volumen.
+
+G) GEOLOCATION: MITIGACIÓN ESPECIAL
+   - La tabla geolocation (189 MB, 1M+ registros) tiene MUCHOS duplicados.
+   - Antes de cualquier JOIN: deduplicar por zip_code_prefix (quedarse con 1 fila).
+   - Esto reduce la tabla de ~1M a ~20K registros (reducción del 98%).
+
+================================================================================
+6. TABLA FALTANTE: olist_product_category_name_translation
+================================================================================
+
+Esta tabla traduce los nombres de categoría de portugués a inglés.
+Sin ella, las preguntas de negocio sobre "categoría" mostrarán
+nombres como "informatica_acessorios" en vez de "computers_accessories".
+
+Opciones:
+  1. Sincronizar desde Airbyte (agregar la tabla al conector Postgres)
+  2. Subir manualmente si tenés el CSV/JSON local
+  3. Hardcodear un diccionario en PySpark (poco escalable)
+
+Recomendación: Opción 1 o 2. Es una tabla de ~71 filas.
+
+================================================================================
+7. RESUMEN EJECUTIVO
+================================================================================
+
+| Aspecto              | Estado actual    | Después de aplicar el plan |
+|----------------------|------------------|----------------------------|
+| Tablas Silver        | 3 de 8           | 8 de 8 ✅                  |
+| Tablas Gold          | 0 de 7           | 7 de 7 ✅                  |
+| Particionamiento     | Solo fact_orders | Facts + geolocation ✅     |
+| Broadcast JOINs      | No implementado  | Todas las dims ✅           |
+| Shuffle partitions   | Default (200)    | 8 (optimizado) ✅           |
+| Geolocation dedup    | No               | Sí (98% reducción) ✅       |
+| Formato Gold         | -                | Parquet + Snappy ✅          |
+| Category translation | Faltante         | Incluida ✅                 |
