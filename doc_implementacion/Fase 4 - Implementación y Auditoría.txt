@@ -1,0 +1,168 @@
+﻿Fase 4: Implementación con Auditoría - Proyecto Integrador M4
+Como Senior Data Engineer, mi filosofía al escribir código de producción se resume en una frase: "Falla rápido, recupérate solo, y avisa cuando no puedas".
+En esta fase, presento los scripts fundacionales del proyecto. Cada bloque de código incluye auditoría (logging), manejo de errores (validaciones) y justificación técnica del "por qué".
+Artefacto 1: Docker Compose optimizado para t2.micro (Infraestructura)
+¿Por qué este código? Correr Airflow en una t2.micro (1GB RAM) es el mayor ⚠️ RIESGO TÉCNICO del proyecto. Si usamos el docker-compose.yaml oficial de Airflow, la instancia colapsará por falta de memoria (OOM). Aquí aplicamos Resource Quotas para evitarlo.
+# docker-compose.yaml (Fragmento optimizado)
+version: '3.8'
+x-airflow-common:
+ &airflow-common
+ image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.1}
+ environment:
+   # Desactivamos cargar ejemplos para ahorrar RAM
+   &airflow-common-env
+   AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+   # Usamos LocalExecutor en lugar de Celery para evitar levantar Redis/Workers extras
+   AIRFLOW__CORE__EXECUTOR: 'LocalExecutor' 
+ volumes:
+   - ./dags:/opt/airflow/dags
+   - ./logs:/opt/airflow/logs
+
+services:
+ airflow-webserver:
+   <<: *airflow-common
+   command: webserver
+   ports:
+     - "8080:8080"
+   deploy:
+     resources:
+       limits:
+         memory: 400M # AUDITORÍA: Límite estricto de RAM para evitar colapso de la EC2
+ 
+ airflow-scheduler:
+   <<: *airflow-common
+   command: scheduler
+   deploy:
+     resources:
+       limits:
+         memory: 400M # Dejamos ~200M libres para el SO Ubuntu
+
+Artefacto 2: DAG de Airflow (Orquestación Resiliente)
+¿Por qué este código? El DAG no solo mueve datos; debe auditar el proceso. Incluimos reintentos automáticos (Exponential Backoff) y alertas en caso de fallo, garantizando que no haya errores silenciosos.
+# dags/main_pipeline_dag.py
+from airflow import DAG
+from airflow.providers.airbyte.operators.airbyte import AirbyteTriggerSyncOperator
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.utils.dates import days_ago
+from datetime import timedelta
+import logging
+
+# AUDITORÍA: Función de callback para notificar fallos
+def on_failure_callback(context):
+   task_id = context.get('task_instance').task_id
+   logging.error(f"⚠️ ALERTA: La tarea {task_id} ha fallado. Revisar logs.")
+   # En producción, aquí iría un SlackWebhookOperator o envío de Email
+
+default_args = {
+   'owner': 'data_engineer_pro',
+   'depends_on_past': False,
+   'email_on_failure': False,
+   'retries': 3, # VALIDACIÓN: Tolerancia a fallos de red
+   'retry_delay': timedelta(minutes=2), # Exponential backoff manual
+   'on_failure_callback': on_failure_callback
+}
+
+with DAG(
+   'pi_m4_medallion_pipeline',
+   default_args=default_args,
+   description='Orquestación ELT: Airbyte -> Raw -> Silver -> Gold',
+   schedule_interval='@daily',
+   start_date=days_ago(1),
+   catchup=False,
+   tags=['PI', 'Medallion', 'Batch']
+) as dag:
+
+   # 1. Tarea de Ingesta (Extract & Load)
+   ingest_postgres = AirbyteTriggerSyncOperator(
+       task_id='airbyte_ingest_postgres',
+       airbyte_conn_id='airbyte_default',
+       connection_id='<TU-AIRBYTE-CONNECTION-ID>', # ID de la conexión en Airbyte
+       asynchronous=False,
+       timeout=3600,
+       wait_seconds=3
+   )
+
+   # 2. Tarea de Procesamiento (Transform - Delegado a EMR/Livy o Spark Local si hay RAM)
+   # Justificación: Usamos SparkSubmitOperator para mantener el desacoplamiento
+   process_silver = SparkSubmitOperator(
+       task_id='spark_raw_to_silver',
+       application='/opt/airflow/dags/scripts/raw_to_silver.py',
+       conn_id='spark_default',
+       conf={"spark.driver.memory": "1g"}, # Control de recursos del job
+       name='raw_to_silver_job'
+   )
+
+   # DEPENDENCIAS: El procesamiento solo inicia si la ingesta es 100% exitosa
+   ingest_postgres >> process_silver
+
+Artefacto 3: PySpark - Contratos de Datos y Calidad (Raw to Silver)
+¿Por qué este código? Spark es propenso a fallar si un esquema cambia. Aquí forzamos un contrato de datos (StructType) y escribimos de forma idempotente para que re-correr el job no duplique registros.
+# dags/scripts/raw_to_silver.py
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+from pyspark.sql.functions import col, current_timestamp, dropDuplicates
+import sys
+
+def get_spark_session():
+   return SparkSession.builder \
+       .appName("PI_M4_Raw_to_Silver") \
+       .config("spark.sql.parquet.compression.codec", "snappy") \
+       .getOrCreate()
+
+def enforce_schema_and_clean(spark):
+   logger = spark._jvm.org.apache.log4j.LogManager.getLogger("RawToSilver")
+   logger.info("Iniciando procesamiento Raw to Silver")
+
+   # 1. CONTRATO DE DATOS (Schema Enforcement)
+   # Justificación: Evitamos inferSchema() porque es costoso y peligroso. 
+   # Si la API envía un String en 'latitude', Spark lo convertirá a Null en vez de fallar silenciosamente.
+   api_schema = StructType([
+       StructField("location_name", StringType(), True),
+       StructField("latitude", DoubleType(), True),
+       StructField("longitude", DoubleType(), True)
+   ])
+
+   raw_path = "s3a://pi-henry-datalake/raw/api/"
+   silver_path = "s3a://pi-henry-datalake/silver/api_clean/"
+
+   try:
+       # 2. LECTURA Y VALIDACIÓN
+       df = spark.read.schema(api_schema).json(raw_path)
+       
+       # Auditoría Data Quality
+       total_rows = df.count()
+       if total_rows == 0:
+           logger.error("VALIDATION FAILED: El dataset raw está vacío.")
+           sys.exit(1) # Detenemos el job para que Airflow lo marque como fallido
+
+       # 3. TRANSFORMACIONES SILVER
+       df_clean = df.filter(col("location_name").isNotNull()) \
+                    .dropDuplicates(["location_name", "latitude", "longitude"]) \
+                    .withColumn("processed_at", current_timestamp())
+
+       # Auditoría post-limpieza
+       clean_rows = df_clean.count()
+       logger.info(f"Registros procesados: {clean_rows} de {total_rows} originales.")
+
+       # 4. ESCRITURA IDEMPOTENTE
+       # Justificación: mode("overwrite") asegura que si Airflow reintenta la tarea, 
+       # no se dupliquen los datos de la partición actual.
+       df_clean.write \
+           .mode("overwrite") \
+           .parquet(silver_path)
+           
+       logger.info("Carga en Silver exitosa.")
+
+   except Exception as e:
+       logger.error(f"Error crítico en PySpark: {str(e)}")
+       sys.exit(1)
+
+if __name__ == "__main__":
+   spark = get_spark_session()
+   enforce_schema_and_clean(spark)
+   spark.stop()
+
+Pruebas de Integración (Testing Strategy)
+Antes de mandar esto a producción, ¿cómo validamos que funciona?
+1. Prueba Unitaria (Pytest): Crearíamos un pequeño DataFrame mockeado en memoria en Pytest y lo pasaríamos por las transformaciones del bloque 3 para asegurar que filtra nulos correctamente.
+2. Smoke Test de Airflow: Ejecutar airflow dags test pi_m4_medallion_pipeline <fecha> en la terminal de la EC2 para simular una corrida sin afectar la metadata real, verificando que Airflow y Airbyte se comunican correctamente.

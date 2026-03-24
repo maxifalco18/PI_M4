@@ -1,0 +1,80 @@
+================================================================================
+GUÍA PASO A PASO - HITO 2: MOTOR DE ORQUESTACIÓN Y CI/CD (AIRFLOW EN EC2)
+================================================================================
+
+Respondiendo a tu pregunta: No hay ningún problema en ir directo a EC2.
+El único "inconveniente" en la capa gratuita (t3.micro) es la memoria (1GB RAM).
+Si levantamos un Airflow normal, colapsa por "OOM" (Out of Memory). 
+Por eso usaremos un "docker-compose.yaml" optimizado (LocalExecutor en vez de Celery, y sin Workers ni Redis).
+
+¡Buenas noticias! He revisado tu cuenta de AWS y YA TIENES una instancia EC2 corriendo.
+Detalles de tu instancia actual:
+- ID: i-0e83b221f4f13dc91
+- Tipo: t3.micro
+- IP Pública: 54.174.203.213
+- Llave SSH: pi-m4-ec2-key
+
+A continuación, los pasos exactos para que instales Airflow paso a paso:
+
+--------------------------------------------------------------------------------
+PASO 1: CONECTARSE A LA EC2 (Vía SSH)
+--------------------------------------------------------------------------------
+Abre tu terminal (PowerShell o Git Bash) en la carpeta donde tienes tu archivo "pi-m4-ec2-key.pem".
+Ejecuta el siguiente comando:
+
+    ssh -i "pi-m4-ec2-key.pem" ubuntu@54.174.203.213
+
+(Si te pregunta "Are you sure you want to continue connecting?", escribe "yes").
+
+--------------------------------------------------------------------------------
+PASO 2: INSTALAR DOCKER Y DOCKER COMPOSE EN LA EC2
+--------------------------------------------------------------------------------
+Una vez conectado, copia y pega estos comandos uno por uno en la terminal de ubuntu:
+
+# Actualiza el sistema
+sudo apt update && sudo apt upgrade -y
+
+# Instala Docker de forma rápida
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Da permisos a tu usuario 'ubuntu' para ejecutar Docker sin escribir 'sudo'
+sudo usermod -aG docker ubuntu
+
+# Instala Docker Compose
+sudo apt install docker-compose-plugin -y
+
+# IMPORTANTE: Escribe 'exit' para salir de la máquina, y luego vuelve a 
+# conectarte con el comando ssh del Paso 1. Si no lo haces, Docker te dará error de permisos.
+
+--------------------------------------------------------------------------------
+PASO 3: PREPARAR EL ENTORNO DE AIRFLOW EN LA EC2
+--------------------------------------------------------------------------------
+Crea la carpeta de tu proyecto en la EC2:
+
+mkdir -p /home/ubuntu/airflow/{dags,logs,plugins}
+cd /home/ubuntu/airflow
+
+# Mapea el usuario de Airflow (UID 50000)
+echo -e "AIRFLOW_UID=50000" > .env
+
+--------------------------------------------------------------------------------
+PASO 4: SUBIR EL ARCHIVO DOCKER-COMPOSE.YAML
+--------------------------------------------------------------------------------
+1. Abre una NUEVA pestaña en tu terminal de Windows local (sin cerrar la de la EC2).
+2. Ve a la carpeta C:\Users\CTI23994\Downloads\PIM4\ (donde está tu docker-compose.yaml).
+3. Transfiere el archivo a la EC2 usando SCP:
+
+   scp -i "pi-m4-ec2-key.pem" docker-compose.yaml ubuntu@54.174.203.213:/home/ubuntu/airflow/
+
+--------------------------------------------------------------------------------
+PASO 5: LEVANTAR AIRFLOW
+--------------------------------------------------------------------------------
+Regresa a tu terminal conectada a la EC2 (Paso 3) y asegúrate de estar en /home/ubuntu/airflow.
+Ejecuta:
+
+   docker compose up -d
+
+Espera un par de minutos a que descargue las imágenes e inicie la base de datos y webserver.
+Podrás acceder a Airflow abriendo en tu navegador: http://54.174.203.213:8080
+(Usuario: airflow / Contraseña: airflow)

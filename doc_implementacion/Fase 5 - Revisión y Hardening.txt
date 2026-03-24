@@ -1,0 +1,45 @@
+﻿Fase 5: Revisión y Hardening (Endurecimiento) - Proyecto Integrador M4
+Como Senior Data Engineer, la fase de Hardening es nuestro sello de calidad. Antes de declarar el proyecto como "Producción", debemos someter la arquitectura a una auditoría técnica en cuatro dimensiones críticas: Rendimiento (Performance), Seguridad, Resiliencia (Edge Cases) y Gobernanza.
+1. Revisión de Rendimiento y FinOps (Costo-Eficiencia)
+En el AWS Free Tier, la ineficiencia no solo es lenta; es un bloqueante que apaga los servidores por falta de recursos (OOM) o genera cobros inesperados en la tarjeta de crédito.
+* Tuning de Apache Spark (Mitigación de Shuffles):
+   * El Problema: Por defecto, Spark usa 200 particiones para operaciones de Shuffle (como JOIN o groupBy). Para un volumen pequeño/mediano, esto genera demasiados archivos pequeños, ahogando la red.
+   * Hardening: Ajustaremos la configuración dinámicamente: spark.conf.set("spark.sql.shuffle.partitions", "10") (o un número acorde a los cores disponibles en tu clúster efímero).
+* Gestión del Ciclo de Vida en S3 (FinOps):
+   * El Problema: Acumular datos crudos históricos infinitamente consumirá el almacenamiento gratuito.
+   * Hardening: Implementar S3 Lifecycle Rules. Configuraremos una regla para que los archivos en la carpeta /raw se eliminen o pasen a la clase de almacenamiento Glacier después de 30 días, conservando únicamente las capas /silver y /gold.
+* Optimización de Lectura (Predicate Pushdown):
+   * Validaremos que nuestras consultas en Athena y Spark filtren por las particiones (ej. year, month, region) antes de cargar los datos en memoria, aprovechando la metadata de los archivos Parquet.
+2. Hardening de Seguridad (SecOps)
+Aplicaremos una postura de "Confianza Cero" (Zero Trust) en nuestro entorno cloud.
+* Erradicación de Credenciales Hardcodeadas:
+   * Prohibición: Nunca debe haber un access_key o secret_key en los scripts de PySpark o archivos de Airflow.
+   * Hardening: La instancia EC2 y el clúster EMR/Databricks utilizarán IAM Roles con políticas de acceso mínimo indispensable (Least Privilege) apuntando exclusivamente al bucket pi-henry-datalake.
+* Blindaje de Red (Security Groups):
+   * La instancia EC2 t2.micro que aloja Airflow NO debe estar abierta al mundo (0.0.0.0/0).
+   * Hardening: El Security Group solo permitirá el puerto 22 (SSH) y el puerto 8080 (Airflow Webserver) estrictamente vinculados a tu dirección IP pública estática/actual.
+* Encriptación en Reposo:
+   * Activaremos obligatoriamente SSE-S3 (Server-Side Encryption) por defecto en el bucket S3 para asegurar que todo dato, desde el JSON de la API hasta la tabla final en Postgres, se guarde encriptado.
+3. Resiliencia, Streaming y Edge Cases
+Nuestra arquitectura Lambda (Batch + Streaming) debe ser tolerante a fallos y a la llegada tardía de información.
+* Tolerancia a Datos Atrasados (Late Data) en Kafka:
+   * El Problema: ¿Qué pasa si un evento de telemetría de Kafka de las 10:00 llega a las 10:15 por un corte de red en el origen?
+   * Hardening: Implementaremos Watermarking en Spark Structured Streaming. Definiremos withWatermark("event_timestamp", "15 minutes"). Esto le dice a Spark que espere datos atrasados hasta 15 minutos antes de cerrar la ventana de agregación, descartando datos excesivamente viejos para proteger la memoria (evitando que el estado de streaming crezca infinitamente).
+* Checkpointing Obligatorio en Streaming:
+   * Todo job de Spark Streaming debe tener un directorio de checkpoint en S3. Si la máquina de Spark se reinicia, leerá este directorio para saber exactamente en qué offset de Kafka se quedó, evitando procesar el mismo evento dos veces o perder información.
+* Idempotencia Asegurada:
+   * Validación de que re-ejecutar el DAG de Airflow de ayer, hoy, no duplicará las ventas. El uso de mode("overwrite") junto con particiones dinámicas es nuestro seguro de vida aquí.
+4. Gobernanza, Linaje y CI/CD (DataOps)
+Un pipeline no documentado es una caja negra inauditable.
+* Automatización de Despliegues (CI/CD con GitHub Actions):
+   * Hardening: En lugar de subir los DAGs a la EC2 manualmente vía SFTP o SCP, configuraremos un archivo .github/workflows/deploy.yml. Cada vez que hagamos un git push a la rama main, GitHub Actions validará la sintaxis de Python (usando flake8) y copiará los DAGs seguros a la EC2.
+* Catálogo de Datos (AWS Lake Formation / Glue):
+   * Integraremos un Crawler de AWS Glue para que lea las carpetas /silver y /gold y actualice automáticamente el Data Catalog. Esto proporciona un linaje claro y permite a los analistas saber exactamente qué tipos de datos (esquemas) existen sin necesidad de preguntarle a los ingenieros.
+5. Check-List de Criterios Go/No-Go (Validación Final)
+Antes de hacer la entrega final del proyecto Integrador, el sistema debe pasar este umbral binario:
+* [ ] Prueba de OOM: Airflow se mantiene estable en la EC2 por 24 horas continuas sin reiniciar el contenedor por falta de RAM.
+* [ ] Prueba de Ingesta Batch: Airbyte sincroniza los JSON de la API y el incremental de PostgreSQL de forma exitosa.
+* [ ] Prueba de Streaming: Enviar un mensaje de prueba al tópico de Kafka y verificar que impacte en la capa Gold en menos de 5 minutos cruzándose con la data histórica.
+* [ ] Prueba de Linaje/Consulta: Amazon Athena puede ejecutar SELECT * FROM gold_layer exitosamente escaneando solo los bytes de la partición consultada.
+* [ ] Data Quality Smoke Test: Cero nulos en claves primarias (id_primario, location_name).
+Aprobando este checklist, el pipeline es robusto, industrializable y está listo para defenderse con éxito en cualquier revisión arquitectónica.
