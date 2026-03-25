@@ -1,13 +1,72 @@
 from datetime import datetime, timedelta
 import logging
+import requests
+import time
 from airflow import DAG
-from airflow.providers.airbyte.operators.airbyte import AirbyteTriggerSyncOperator
+from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
 from airflow.models import Variable
 
 def on_failure_callback(context):
     task_id = context.get('task_instance').task_id
     logging.error(f"⚠️ CRITICAL ALERT: Task {task_id} failed. Please review the logs.")
+
+def run_airbyte_cloud_sync(connection_id_var):
+    connection_id = Variable.get(connection_id_var)
+    client_id = Variable.get("AIRBYTE_CLIENT_ID")
+    client_secret = Variable.get("AIRBYTE_CLIENT_SECRET")
+    
+    print(f"Triggering Airbyte Cloud Sync for connection: {connection_id}")
+    
+    # 1. Obtenemos el Access Token dinámicamente
+    token_url = "https://api.airbyte.com/v1/applications/token"
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "client_credentials"
+    }
+    
+    # Para el endpoint de token de Airbyte usualmente se pasan los credenciales de client en headers o payload, pero según los docs es payload.
+    # Opcionalmente probamos si es Basic Auth, pero Airbyte usa client_credentials payload.
+    auth_resp = requests.post(token_url, json=payload, headers={"Content-Type": "application/json"})
+    auth_resp.raise_for_status()
+    access_token = auth_resp.json()["access_token"]
+    
+    # 2. Disparamos el Job de Sync
+    job_url = "https://api.airbyte.com/v1/jobs"
+    job_payload = {
+        "jobType": "sync",
+        "connectionId": connection_id
+    }
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    print("Llamando a la API de Jobs...")
+    job_resp = requests.post(job_url, json=job_payload, headers=headers)
+    job_resp.raise_for_status()
+    job_id = job_resp.json()["jobId"]
+    print(f"Job disparado con éxito. ID: {job_id}")
+    
+    # 3. Hacemos Polling hasta que termine
+    status_url = f"https://api.airbyte.com/v1/jobs/{job_id}"
+    while True:
+        status_resp = requests.get(status_url, headers=headers)
+        status_resp.raise_for_status()
+        status = status_resp.json()
+        
+        current_status = status.get("status", "pending")
+        print(f"Estado del job: {current_status}")
+        
+        if current_status in ["succeeded", "completed"]:
+            print("Sincronización finalizada exitosamente.")
+            break
+        elif current_status in ["failed", "cancelled"]:
+            raise Exception(f"El job de Airbyte falló con estado: {current_status}")
+            
+        time.sleep(15)
 
 default_args = {
     'owner': 'maxi',
@@ -30,19 +89,17 @@ with DAG(
 ) as dag:
 
     # 1. HITO 3 (Estricto según Consignas - 10 puntos de evaluación)
-    # Ejecutamos en paralelo la Ingesta de Postgres y la de la API Pública
-    sync_postgres_to_s3 = AirbyteTriggerSyncOperator(
+    # Ejecutamos en paralelo la Ingesta de Postgres y la de la API Pública usando APIs Nativas de Cloud
+    sync_postgres_to_s3 = PythonOperator(
         task_id='trigger_airbyte_postgres_sync',
-        airbyte_conn_id='airbyte_default',
-        connection_id="{{ var.value.get('AIRBYTE_CONN_POSTGRES', 'PLACEHOLDER_POSTGRES_ID') }}",
-        asynchronous=False, 
+        python_callable=run_airbyte_cloud_sync,
+        op_kwargs={'connection_id_var': 'AIRBYTE_CONN_POSTGRES'},
     )
 
-    sync_api_to_s3 = AirbyteTriggerSyncOperator(
+    sync_api_to_s3 = PythonOperator(
         task_id='trigger_airbyte_api_sync',
-        airbyte_conn_id='airbyte_default',
-        connection_id="{{ var.value.get('AIRBYTE_CONN_API', 'PLACEHOLDER_API_ID') }}",
-        asynchronous=False, 
+        python_callable=run_airbyte_cloud_sync,
+        op_kwargs={'connection_id_var': 'AIRBYTE_CONN_API'},
     )
 
     # 2. HITO 4 (Capa Silver): Ejecuta el Job Process en AWS Glue
@@ -52,7 +109,7 @@ with DAG(
         region_name='us-east-1',
         aws_conn_id='aws_default', 
         wait_for_completion=True,
-        deferrable=True,
+        deferrable=False,
     )
 
     # 3. HITO 4 (Capa Gold): Genera las Tablas de Negocio en formato Parquet
@@ -62,7 +119,7 @@ with DAG(
         region_name='us-east-1',
         aws_conn_id='aws_default',
         wait_for_completion=True,
-        deferrable=True,
+        deferrable=False,
     )
 
     # 4. ORQUESTACIÓN SECUENCIAL LÓGICA (Shift-Left Integration)
