@@ -9,7 +9,17 @@ from airflow.models import Variable
 
 def on_failure_callback(context):
     task_id = context.get('task_instance').task_id
-    logging.error(f"⚠️ CRITICAL ALERT: Task {task_id} failed. Please review the logs.")
+    dag_id = context.get('task_instance').dag_id
+    error_msg = f"⚠️ CRITICAL ALERT: Task {task_id} in DAG {dag_id} failed."
+    logging.error(error_msg)
+    
+    # TASK-001: Implement Slack/Webhook Alerting
+    webhook_url = Variable.get("SLACK_WEBHOOK_URL", default_var=None)
+    if webhook_url:
+        try:
+            requests.post(webhook_url, json={"text": error_msg})
+        except Exception as e:
+            logging.error(f"Failed to send Slack alert: {e}")
 
 def run_airbyte_cloud_sync(connection_id_var):
     connection_id = Variable.get(connection_id_var)
@@ -102,25 +112,79 @@ with DAG(
         op_kwargs={'connection_id_var': 'AIRBYTE_CONN_API'},
     )
 
-    # 2. HITO 4 (Capa Silver): Ejecuta el Job Process en AWS Glue
+    # TASK-004: Pass parameters to Glue Jobs
+    bucket_name = Variable.get("S3_BUCKET_NAME", default_var="pi-m4-datalake-maxi")
+    
     process_raw_to_silver = GlueJobOperator(
         task_id='spark_raw_to_silver_glue',
         job_name='job_raw_to_silver', 
         region_name='us-east-1',
         aws_conn_id='aws_default', 
+        script_args={
+            '--BUCKET_IN': f"s3://{bucket_name}/raw/batch",
+            '--BUCKET_OUT': f"s3://{bucket_name}/processed/batch"
+        },
         wait_for_completion=True,
         deferrable=False,
     )
 
-    # 3. HITO 4 (Capa Gold): Genera las Tablas de Negocio en formato Parquet
+    # 4. HITO 5 (Speed Layer Transformation): Raw -> Processed
+    # NOTA: En un pipeline real, esto puede ser un job de Spark continuo, 
+    # pero aquí lo orquestamos como un paso tras el batch para validación Lambda.
+    speed_layer_process = GlueJobOperator(
+        task_id='spark_speed_layer_process_glue',
+        job_name='job_processed_streaming',
+        region_name='us-east-1',
+        aws_conn_id='aws_default',
+        script_args={
+            '--s3_raw_path': f"s3://{bucket_name}/raw-streaming/olist_events/",
+            '--s3_processed_path': f"s3://{bucket_name}/processed-streaming/olist_events/",
+            '--checkpoint_path': f"s3://{bucket_name}/checkpoints/speed_layer_trans/"
+        },
+        wait_for_completion=True,
+        deferrable=False,
+    )
+
+    # EXTRA CREDIT: Auditoría de Calidad Independiente
+    # Brinda visibilidad directa del estado DQ en la UI de Airflow
+    dq_audit_silver = GlueJobOperator(
+        task_id='dq_audit_silver_glue',
+        job_name='job_dq_audit',
+        region_name='us-east-1',
+        aws_conn_id='aws_default',
+        script_args={
+            '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
+        },
+        wait_for_completion=True,
+        deferrable=False,
+    )
+
+    delta_maintenance = GlueJobOperator(
+        task_id='spark_delta_maintenance_glue',
+        job_name='job_delta_maintenance',
+        region_name='us-east-1',
+        aws_conn_id='aws_default',
+        script_args={
+            '--s3_gold_path_prefix': f"s3://{bucket_name}/gold/"
+        },
+        wait_for_completion=True,
+        deferrable=False,
+    )
+
     process_silver_to_gold = GlueJobOperator(
         task_id='spark_silver_to_gold_glue',
         job_name='job_silver_to_gold',
         region_name='us-east-1',
         aws_conn_id='aws_default',
+        script_args={
+            '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
+            '--BUCKET_STREAMING': f"s3://{bucket_name}/processed-streaming",
+            '--BUCKET_GOLD': f"s3://{bucket_name}/gold"
+        },
         wait_for_completion=True,
         deferrable=False,
     )
 
     # 4. ORQUESTACIÓN SECUENCIAL LÓGICA (Shift-Left Integration)
-    [sync_postgres_to_s3, sync_api_to_s3] >> process_raw_to_silver >> process_silver_to_gold
+    [sync_postgres_to_s3, sync_api_to_s3] >> process_raw_to_silver >> dq_audit_silver >> process_silver_to_gold
+    process_silver_to_gold >> [speed_layer_process, delta_maintenance]
