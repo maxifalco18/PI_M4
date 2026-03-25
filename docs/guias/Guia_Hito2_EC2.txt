@@ -59,13 +59,17 @@ cd /home/ubuntu/airflow
 echo -e "AIRFLOW_UID=50000" > .env
 
 --------------------------------------------------------------------------------
-PASO 4: SUBIR EL ARCHIVO DOCKER-COMPOSE.YAML
+PASO 4: SUBIR EL ARCHIVO DOCKER-COMPOSE Y LOS DAGS
 --------------------------------------------------------------------------------
 1. Abre una NUEVA pestaña en tu terminal de Windows local (sin cerrar la de la EC2).
 2. Ve a la carpeta C:\Users\CTI23994\Downloads\PIM4\ (donde está tu docker-compose.yaml).
-3. Transfiere el archivo a la EC2 usando SCP:
+3. Transfiere el archivo docker-compose a la EC2 usando SCP:
 
    scp -i "pi-m4-ec2-key.pem" docker-compose.yaml ubuntu@54.174.203.213:/home/ubuntu/airflow/
+
+4. Transfiere tu carpeta de DAGs para que Airflow pueda orquestar el pipeline:
+
+   scp -i "pi-m4-ec2-key.pem" -r orchestration/dags/* ubuntu@54.174.203.213:/home/ubuntu/airflow/dags/
 
 --------------------------------------------------------------------------------
 PASO 5: LEVANTAR AIRFLOW

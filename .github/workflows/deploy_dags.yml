@@ -6,7 +6,6 @@ on:
       - dev
     paths:
       - "orchestration/dags/**"
-      - "dags/**"
 
 jobs:
   deploy:
@@ -22,6 +21,6 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          source: "dags/*"
+          source: "orchestration/dags/*"
           target: "/home/ubuntu/airflow/dags"
-          strip_components: 1
+          strip_components: 2
