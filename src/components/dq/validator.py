@@ -45,6 +45,24 @@ class DataQualityValidator:
         })
         return self
 
+    def expect_column_values_to_be_between(self, column: str, min_val: float, max_val: float):
+        """Valida que los valores de la columna estén en el rango [min, max]."""
+        total_count = self.df.count()
+        if total_count == 0:
+            return self
+
+        out_of_range = self.df.filter((self.df[column] < min_val) | (self.df[column] > max_val)).count()
+        
+        status = "PASS" if out_of_range == 0 else "FAIL"
+        self.results.append({
+            "expectation": "be_between",
+            "column": column,
+            "status": status,
+            "observed_value": f"Out of range: {out_of_range}",
+            "threshold": f"[{min_val}, {max_val}]"
+        })
+        return self
+
     def expect_column_values_to_exist_in_table(self, column: str, parent_df: DataFrame, parent_column: str):
         """Valida Integridad Referencial (FK -> PK)."""
         orphans = self.df.join(parent_df, self.df[column] == parent_df[parent_column], "left_anti").count()

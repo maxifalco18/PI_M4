@@ -1,108 +1,60 @@
 import sys
 import os
-
-try:
-    from src.lib.environment import setup_environment
-    logger = setup_environment()
-except ImportError:
-    # Fallback local/dev
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.lib.environment import setup_environment
-    logger = setup_environment()
-
+import logging
 from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, sum as db_sum, count, lit, current_timestamp, broadcast
 from awsglue.context import GlueContext
 from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from src.transformations.gold import (
-    unify_lambda_orders, transform_gold_sales_by_category,
-    transform_gold_sales_by_region, transform_gold_sales_by_payment
-)
 
-# 1. Inicialización y Parsing
-args = getResolvedOptions(sys.argv, ['JOB_NAME', 'BUCKET_SILVER', 'BUCKET_STREAMING', 'BUCKET_GOLD'])
-
+# ──────────────────────────────────────────────────────────────────────────────
+# 1. SETUP
+# ──────────────────────────────────────────────────────────────────────────────
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
-job.init(args['JOB_NAME'], args)
+job.init("job_silver_to_gold", {})
 
-# 2. Configuración de Catálogo 
-spark.sql("CREATE DATABASE IF NOT EXISTS business_gold")
-spark.sql("USE business_gold")
+BUCKET = "s3://pi-m4-datalake-maxi"
+SILVER = f"{BUCKET}/processed/batch"
+GOLD   = f"{BUCKET}/gold"
 
-# 1. LEER DATOS BATCH (SILVER)
-bucket_silver = args['BUCKET_SILVER']
-bucket_processed_streaming = args['BUCKET_STREAMING'].replace("raw-streaming", "processed-streaming")
-bucket_gold = args['BUCKET_GOLD']
+print(f"Iniciando Silver -> Gold. Leyendo de {SILVER}...")
 
-df_orders_batch = spark.read.parquet(f"{bucket_silver}/fact_orders/")
+# ──────────────────────────────────────────────────────────────────────────────
+# 2. TRANSFORM & WRITE (Parquet over S3, no Delta merge to avoid Jars issues)
+# ──────────────────────────────────────────────────────────────────────────────
+# LECTURA
+df_orders = spark.read.parquet(f"{SILVER}/fact_orders/")
+df_items = spark.read.parquet(f"{SILVER}/fact_order_items/")
+df_products = spark.read.parquet(f"{SILVER}/dim_products/")
+df_customers = spark.read.parquet(f"{SILVER}/dim_customers/")
+df_payments = spark.read.parquet(f"{SILVER}/fact_payments/")
 
-# 2. LEER DATOS STREAMING (SPEED LAYER - PROCESSED)
-df_orders_streaming = None
-try:
-    df_orders_streaming = spark.read.parquet(f"{bucket_processed_streaming}/olist_events/")
-    print("Streaming data found.")
-except:
-    print("No streaming data found yet. Using batch data only.")
+# GOLD: VENTAS POR CATEGORÍA
+df_gold_sales = df_items.join(broadcast(df_products), "product_id") \
+                        .groupBy("product_category_name", "year", "month") \
+                        .agg(db_sum("price").alias("total_revenue"), count("order_item_id").alias("total_items_sold"))
 
-# 3. UNIFICACIÓN LAMBDA (Modular)
-df_orders = unify_lambda_orders(df_orders_batch, df_orders_streaming)
+df_gold_sales.write.mode("overwrite").parquet(f"{GOLD}/gold_sales_by_category_time/")
+print("gold_sales_by_category_time OK")
 
-# HITO 3: Optimización estratégica de Caché (Senior Pattern)
-# Persistimos df_orders ya que se usa en 3 joins distintos para Capa Gold (Ventas, Región, Pago)
-df_orders.persist()
+# GOLD: VENTAS POR REGION
+df_gold_region = df_orders.join(broadcast(df_customers), "customer_id") \
+                          .groupBy("customer_state", "year", "month") \
+                          .agg(db_sum("order_value").alias("total_sales"))
 
-# --------------------------------------------------------------------------
-# MODELO DE NEGOCIO: VENTAS POR CATEGORIA Y TIEMPO (OBT)
-# --------------------------------------------------------------------------
-df_items = spark.read.parquet(f"{bucket_silver}/fact_order_items/")
-df_products = spark.read.parquet(f"{bucket_silver}/dim_products/")
+df_gold_region.write.mode("overwrite").parquet(f"{GOLD}/gold_sales_by_region/")
+print("gold_sales_by_region OK")
 
-df_gold_sales = transform_gold_sales_by_category(df_items, df_products)
+# GOLD: VENTAS POR METODO DE PAGO
+df_gold_payment = df_payments.join(broadcast(df_orders), "order_id") \
+                           .groupBy("payment_type", "year", "month") \
+                           .agg(db_sum("order_value").alias("total_sales"))
 
-# Guardamos la OBT en formato DELTA usando MERGE
-df_gold_sales.createOrReplaceTempView("updates")
-spark.sql(f"""
-    MERGE INTO business_gold.gold_sales_by_category_time t
-    USING updates u
-    ON t.product_category_name = u.product_category_name AND t.year = u.year AND t.month = u.month
-    WHEN MATCHED THEN UPDATE SET *
-    WHEN NOT MATCHED THEN INSERT *
-""")
-
-# --------------------------------------------------------------------------
-# MODELO DE NEGOCIO: VENTAS POR REGION (CLIENTE)
-# --------------------------------------------------------------------------
-df_customers = spark.read.parquet(f"{bucket_silver}/dim_customers/")
-
-df_gold_region = transform_gold_sales_by_region(df_orders, df_customers)
-
-df_gold_region.createOrReplaceTempView("updates_region")
-spark.sql("""
-    MERGE INTO business_gold.gold_sales_by_region t
-    USING updates_region u
-    ON t.customer_state = u.customer_state AND t.year = u.year AND t.month = u.month
-    WHEN MATCHED THEN UPDATE SET *
-    WHEN NOT MATCHED THEN INSERT *
-""")
-
-# --------------------------------------------------------------------------
-# MODELO DE NEGOCIO: VENTAS POR METODO DE PAGO
-# --------------------------------------------------------------------------
-df_payments = spark.read.parquet(f"{bucket_silver}/fact_payments/")
-
-df_gold_payment = transform_gold_sales_by_payment(df_payments, df_orders)
-
-df_gold_payment.createOrReplaceTempView("updates_payment")
-spark.sql("""
-    MERGE INTO business_gold.gold_gold_sales_by_payment t
-    USING updates_payment u
-    ON t.payment_type = u.payment_type AND t.year = u.year AND t.month = u.month
-    WHEN MATCHED THEN UPDATE SET *
-    WHEN NOT MATCHED THEN INSERT *
-""")
+df_gold_payment.write.mode("overwrite").parquet(f"{GOLD}/gold_sales_by_payment/")
+print("gold_sales_by_payment OK")
 
 job.commit()
-print("¡Capa GOLD terminada exitosamente!")
+print("Finalizado!")

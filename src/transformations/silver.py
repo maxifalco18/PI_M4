@@ -25,9 +25,15 @@ def transform_payments(df: DataFrame) -> DataFrame:
     return df # Currently just the raw data before partitioning
 
 def transform_customers(df: DataFrame) -> DataFrame:
-    """Transformation logic for DIM_CUSTOMERS with SCD Type 2 metadata."""
+    """
+    Transformation logic for DIM_CUSTOMERS with SCD Type 2 metadata.
+    Note: The actual MERGE logic to handle versioning is implemented in the Glue Job 
+    entry point using the metadata added here.
+    """
     df = apply_dq_checks(df, "DIM_CUSTOMERS", "customer_id")
     df = df.dropDuplicates(['customer_id'])
+    
+    # Adding SCD Type 2 metadata
     return df.withColumn("effective_date", current_date()) \
              .withColumn("end_date", lit("9999-12-31").cast("date")) \
              .withColumn("is_current", lit(True))

@@ -1,31 +1,32 @@
 import sys
 import os
-
-try:
-    from src.lib.environment import setup_environment
-    logger = setup_environment()
-except ImportError:
-    # Fallback si el src.zip no se cargó correctamente (Modo Emergencia)
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.lib.environment import setup_environment
-    logger = setup_environment()
-
+import logging
+from datetime import datetime
 from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import year, month, col, lit, current_timestamp, current_date
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
+from delta.tables import DeltaTable
+
 from src.transformations.silver import (
     transform_geolocation, transform_orders, transform_payments,
     transform_customers, transform_sellers, transform_products,
     transform_order_items, transform_order_reviews
 )
 
+# ──────────────────────────────────────────────────────────────────────────────
 # 1. Inicialización 100% Nube y Parsing de Parámetros
 args = getResolvedOptions(sys.argv, ['JOB_NAME', 'BUCKET_IN', 'BUCKET_OUT'])
 
 sc = SparkContext()
 glueContext = GlueContext(sc)
-spark = glueContext.spark_session
+# Habilitamos soporte nativo para Delta Lake (Indispensable para SCD Tipo 2)
+spark = glueContext.spark_session.builder \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .getOrCreate()
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
@@ -36,6 +37,7 @@ spark.sql("USE processed_silver")
 # 2. Configuración de Performance
 spark.conf.set("spark.sql.shuffle.partitions", "8")
 spark.conf.set("spark.sql.parquet.compression.codec", "snappy")
+spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic") # Clave para incrementalidad básica
 
 # Rutas parametrizadas
 bucket_in = args['BUCKET_IN']
@@ -50,7 +52,6 @@ df_geo = spark.read.parquet(f"{bucket_in}/olist_geolocation/")
 df_geo = transform_geolocation(df_geo)
 df_geo.write.mode("overwrite").partitionBy("geolocation_state") \
     .option("path", f"{bucket_out}/dim_geolocation/") \
-    .option("partitionOverwriteMode", "dynamic") \
     .saveAsTable("dim_geolocation")
 
 # --------------------------------------------------------------------------
@@ -72,13 +73,28 @@ df_payments.write.mode("overwrite").partitionBy("payment_type") \
     .saveAsTable("fact_payments")
 
 # --------------------------------------------------------------------------
-# DIM_CUSTOMERS
+# DIM_CUSTOMERS (SCD Type 2)
 # --------------------------------------------------------------------------
-df_customers = spark.read.parquet(f"{bucket_in}/olist_customers/")
-df_customers = transform_customers(df_customers)
-df_customers.write.mode("overwrite").partitionBy("customer_state") \
-    .option("path", f"{bucket_out}/dim_customers/") \
-    .saveAsTable("dim_customers")
+df_customers_new = spark.read.parquet(f"{bucket_in}/olist_customers/")
+df_customers_new = transform_customers(df_customers_new)
+
+target_path_cust = f"{bucket_out}/dim_customers/"
+# En un entorno de producción, revisaríamos si la tabla existe en el catálogo
+table_exists = spark.catalog.tableExists("processed_silver.dim_customers")
+
+if not table_exists:
+    df_customers_new.write.format("delta").mode("overwrite").partitionBy("customer_state") \
+        .option("path", target_path_cust) \
+        .saveAsTable("dim_customers")
+else:
+    dt = DeltaTable.forPath(spark, target_path_cust)
+    dt.alias("t").merge(
+        df_customers_new.alias("u"),
+        "t.customer_id = u.customer_id"
+    ).whenMatchedUpdate(set = {
+        "end_date": "current_date()",
+        "is_current": "false"
+    }).whenNotMatchedInsertAll().execute()
 
 # --------------------------------------------------------------------------
 # DIM_SELLERS
@@ -118,3 +134,12 @@ df_reviews.write.mode("overwrite") \
 
 job.commit()
 print("¡Capa SILVER terminada exitosamente!")
+
+# DIM_PRODUCTS
+try:
+    spark.read.parquet(f"{INPUT}/olist_products/").write.mode("overwrite").parquet(f"{OUTPUT}/dim_products/")
+    print("dim_products OK")
+except Exception as e: print(f"Error dim_products: {e}")
+
+job.commit()
+print("Finalizado!")
