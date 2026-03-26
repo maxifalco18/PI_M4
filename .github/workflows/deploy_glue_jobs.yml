@@ -22,9 +22,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Copy Spark scripts and Libs to S3
+      - name: Package and Copy Spark scripts to S3
         run: |
-          # Sync Spark entry points
+          # 1. Sync Spark entry points (Main jobs)
           aws s3 sync spark/ s3://pi-m4-datalake-maxi/scripts/ --exclude "*" --include "*.py"
-          # Sync Modular Source Code (libs)
-          aws s3 sync src/ s3://pi-m4-datalake-maxi/scripts/src/ --exclude "*" --include "*.py"
+          
+          # 2. Package 'src' into a ZIP (Glue Requirement for --extra-py-files)
+          zip -r src.zip src/
+          
+          # 3. Upload the packaged library
+          aws s3 cp src.zip s3://pi-m4-datalake-maxi/scripts/lib/src.zip
