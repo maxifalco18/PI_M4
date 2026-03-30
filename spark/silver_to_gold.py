@@ -15,9 +15,7 @@ from awsglue.utils import getResolvedOptions
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME', 
     'BUCKET_SILVER', 
-    'BUCKET_GOLD', 
-    'extra-py-files', 
-    'datalake-formats'
+    'BUCKET_GOLD'
 ])
 
 sc = SparkContext()

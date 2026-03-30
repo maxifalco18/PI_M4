@@ -21,9 +21,7 @@ from src.transformations.silver import (
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME', 
     'BUCKET_IN', 
-    'BUCKET_OUT', 
-    'extra-py-files', 
-    'datalake-formats'
+    'BUCKET_OUT'
 ])
 
 sc = SparkContext()

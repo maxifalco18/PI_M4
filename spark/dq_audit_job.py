@@ -15,9 +15,7 @@ from src.components.dq.validator import DataQualityValidator
 
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME', 
-    'BUCKET_SILVER', 
-    'extra-py-files', 
-    'datalake-formats'
+    'BUCKET_SILVER'
 ])
 sc = SparkContext()
 glueContext = GlueContext(sc)

@@ -16,8 +16,7 @@ args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
     's3_raw_path',
     's3_processed_path',
-    'checkpoint_path',
-    'extra-py-files'
+    'checkpoint_path'
 ])
 
 raw_path = args['s3_raw_path']
