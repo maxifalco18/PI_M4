@@ -12,7 +12,13 @@ from awsglue.utils import getResolvedOptions
 # 1. SETUP & PARAMETERS
 # ──────────────────────────────────────────────────────────────────────────────
 # Recibimos parámetros desde Airflow
-args = getResolvedOptions(sys.argv, ['JOB_NAME', 'BUCKET_SILVER', 'BUCKET_GOLD'])
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME', 
+    'BUCKET_SILVER', 
+    'BUCKET_GOLD', 
+    'extra-py-files', 
+    'datalake-formats'
+])
 
 sc = SparkContext()
 glueContext = GlueContext(sc)

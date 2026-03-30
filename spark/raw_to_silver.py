@@ -18,7 +18,13 @@ from src.transformations.silver import (
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Inicialización 100% Nube y Parsing de Parámetros
-args = getResolvedOptions(sys.argv, ['JOB_NAME', 'BUCKET_IN', 'BUCKET_OUT'])
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME', 
+    'BUCKET_IN', 
+    'BUCKET_OUT', 
+    'extra-py-files', 
+    'datalake-formats'
+])
 
 sc = SparkContext()
 glueContext = GlueContext(sc)

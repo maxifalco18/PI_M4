@@ -13,7 +13,12 @@ if parent_dir not in sys.path:
 
 from src.components.dq.validator import DataQualityValidator
 
-args = getResolvedOptions(sys.argv, ['JOB_NAME', 'BUCKET_SILVER'])
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME', 
+    'BUCKET_SILVER', 
+    'extra-py-files', 
+    'datalake-formats'
+])
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session

@@ -124,7 +124,8 @@ with DAG(
         script_args={
             '--BUCKET_IN': f"s3://{bucket_name}/raw/batch",
             '--BUCKET_OUT': f"s3://{bucket_name}/processed/batch",
-            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
+            '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
         deferrable=False,
@@ -158,7 +159,8 @@ with DAG(
         aws_conn_id='aws_default',
         script_args={
             '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
-            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
+            '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
         deferrable=False,
@@ -171,7 +173,8 @@ with DAG(
         aws_conn_id='aws_default',
         script_args={
             '--s3_gold_path_prefix': f"s3://{bucket_name}/gold/",
-            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
+            '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
         deferrable=False,
@@ -186,7 +189,8 @@ with DAG(
             '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
             '--BUCKET_STREAMING': f"s3://{bucket_name}/processed-streaming",
             '--BUCKET_GOLD': f"s3://{bucket_name}/gold",
-            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
+            '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
         deferrable=False,
