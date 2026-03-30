@@ -132,7 +132,26 @@ with DAG(
         deferrable=False,
     )
 
-
+    # 4. HITO 5 (Speed Layer Transformation): Raw -> Processed
+    # NOTA: En un pipeline real, esto puede ser un job de Spark continuo, 
+    # pero aquí lo orquestamos como un paso tras el batch para validación Lambda.
+    speed_layer_process = GlueJobOperator(
+        task_id='spark_speed_layer_process_glue',
+        job_name='job_processed_streaming',
+        region_name='us-east-1',
+        aws_conn_id='aws_default',
+        script_args={
+            '--s3_raw_path': f"s3://{bucket_name}/raw-streaming/olist_events/",
+            '--s3_processed_path': f"s3://{bucket_name}/processed-streaming/olist_events/",
+            '--checkpoint_path': f"s3://{bucket_name}/checkpoints/speed_layer_trans/",
+            '--s3_silver_path_customers': f"s3://{bucket_name}/processed/batch/dim_customers/",
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
+            '--datalake-formats': 'delta'
+        },
+        wait_for_completion=True,
+        verbose=True,
+        deferrable=False,
+    )
 
 
     # EXTRA CREDIT: Auditoría de Calidad Independiente
@@ -174,7 +193,7 @@ with DAG(
         aws_conn_id='aws_default',
         script_args={
             '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
-            '--BUCKET_STREAMING': f"s3://{bucket_name}/raw-streaming",
+            '--BUCKET_STREAMING': f"s3://{bucket_name}/processed-streaming",
             '--BUCKET_GOLD': f"s3://{bucket_name}/gold",
             '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
             '--datalake-formats': 'delta'
@@ -185,5 +204,5 @@ with DAG(
     )
 
     # 4. ORQUESTACIÓN SECUENCIAL LÓGICA (Shift-Left Integration)
-    [sync_postgres_to_s3, sync_api_to_s3] >> process_raw_to_silver >> dq_audit_silver >> process_silver_to_gold
+    [sync_postgres_to_s3, sync_api_to_s3] >> process_raw_to_silver >> dq_audit_silver >> speed_layer_process >> process_silver_to_gold
     process_silver_to_gold >> delta_maintenance

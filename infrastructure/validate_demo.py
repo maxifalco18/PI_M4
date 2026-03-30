@@ -46,7 +46,8 @@ LAYERS = {
     "RAW Batch":        "raw/batch/",
     "RAW Streaming":    "raw-streaming/olist_events/",
     "SILVER (processed/batch)": "processed/batch/",
-    "GOLD":             "gold/"
+    "GOLD":             "gold/",
+    "STREAMING Processed": "processed-streaming/",
 }
 
 for name, prefix in LAYERS.items():
@@ -131,12 +132,12 @@ print("  CHECK 5: LAMBDA — Gold unifica Batch + Streaming")
 print("="*60)
 
 batch_ok    = check_s3_prefix("gold/gold_sales_by_category_time/")
-stream_ok   = check_s3_prefix("raw-streaming/olist_events/")
+stream_ok   = check_s3_prefix("processed-streaming/")
 
 if batch_ok and stream_ok:
     print(f"{OK} Ambas fuentes presentes -> Lambda Architecture activa")
 elif batch_ok:
-    print(f"{WARN} Solo hay datos Batch. El Speed Layer aún no generó eventos.")
+    print(f"{WARN} Solo hay datos Batch. El Speed Layer aún no procesó eventos.")
 else:
     print(f"{FAIL} Ni la capa Batch ni la Streaming están en Gold.")
 
