@@ -128,6 +128,7 @@ with DAG(
             '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
+        verbose=True,
         deferrable=False,
     )
 
@@ -146,6 +147,7 @@ with DAG(
             '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
         },
         wait_for_completion=True,
+        verbose=True,
         deferrable=False,
     )
 
@@ -163,6 +165,7 @@ with DAG(
             '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
+        verbose=True,
         deferrable=False,
     )
 
@@ -177,6 +180,7 @@ with DAG(
             '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
+        verbose=True,
         deferrable=False,
     )
 
@@ -193,6 +197,7 @@ with DAG(
             '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
+        verbose=True,
         deferrable=False,
     )
 
