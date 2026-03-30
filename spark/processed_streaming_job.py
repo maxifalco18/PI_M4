@@ -57,6 +57,7 @@ query = df_processed \
     .format("parquet") \
     .option("path", processed_path) \
     .option("checkpointLocation", checkpoint_path) \
+    .trigger(availableNow=True) \
     .start()
 
 query.awaitTermination()
