@@ -14,13 +14,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Copy DAGs to EC2
+      - name: Copy DAGs to EC2 (Temp location)
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          source: "orchestration/dags/*"
-          target: "/home/ubuntu/airflow/dags"
-          strip_components: 2
+          source: "orchestration/dags/master_pipeline_dag.py"
+          target: "/home/ubuntu/"
+
+      - name: Move DAGs to Airflow folder with Sudo
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            sudo mv /home/ubuntu/orchestration/dags/master_pipeline_dag.py /home/ubuntu/airflow/dags/
+            sudo rm -rf /home/ubuntu/orchestration
