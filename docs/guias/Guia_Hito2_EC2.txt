@@ -11,7 +11,7 @@ Por eso usaremos un "docker-compose.yaml" optimizado (LocalExecutor en vez de Ce
 Detalles de tu instancia actual:
 - ID: i-0e83b221f4f13dc91
 - Tipo: t3.micro
-- IP Pública: 54.174.203.213
+- IP Pública: 100.31.44.224
 - Llave SSH: pi-m4-ec2-key
 
 A continuación, los pasos exactos para que instales Airflow paso a paso:
@@ -22,7 +22,7 @@ PASO 1: CONECTARSE A LA EC2 (Vía SSH)
 Abre tu terminal (PowerShell o Git Bash) en la carpeta donde tienes tu archivo "pi-m4-ec2-key.pem".
 Ejecuta el siguiente comando:
 
-    ssh -i "pi-m4-ec2-key.pem" ubuntu@54.174.203.213
+    ssh -i "pi-m4-ec2-key.pem" ubuntu@100.31.44.224
 
 (Si te pregunta "Are you sure you want to continue connecting?", escribe "yes").
 
@@ -65,11 +65,11 @@ PASO 4: SUBIR EL ARCHIVO DOCKER-COMPOSE Y LOS DAGS
 2. Ve a la carpeta C:\Users\CTI23994\Downloads\PIM4\ (donde está tu docker-compose.yaml).
 3. Transfiere el archivo docker-compose a la EC2 usando SCP:
 
-   scp -i "pi-m4-ec2-key.pem" docker-compose.yaml ubuntu@54.174.203.213:/home/ubuntu/airflow/
+   scp -i "pi-m4-ec2-key.pem" docker-compose.yaml ubuntu@100.31.44.224:/home/ubuntu/airflow/
 
 4. Transfiere tu carpeta de DAGs para que Airflow pueda orquestar el pipeline:
 
-   scp -i "pi-m4-ec2-key.pem" -r orchestration/dags/* ubuntu@54.174.203.213:/home/ubuntu/airflow/dags/
+   scp -i "pi-m4-ec2-key.pem" -r orchestration/dags/* ubuntu@100.31.44.224:/home/ubuntu/airflow/dags/
 
 --------------------------------------------------------------------------------
 PASO 5: LEVANTAR AIRFLOW
@@ -80,5 +80,5 @@ Ejecuta:
    docker compose up -d
 
 Espera un par de minutos a que descargue las imágenes e inicie la base de datos y webserver.
-Podrás acceder a Airflow abriendo en tu navegador: http://54.174.203.213:8080
+Podrás acceder a Airflow abriendo en tu navegador: http://100.31.44.224:8080
 (Usuario: airflow / Contraseña: airflow)

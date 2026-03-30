@@ -145,19 +145,6 @@ with DAG(
         deferrable=False,
     )
 
-    process_silver_to_gold = GlueJobOperator(
-        task_id='spark_silver_to_gold_glue',
-        job_name='job_silver_to_gold',
-        region_name='us-east-1',
-        aws_conn_id='aws_default',
-        script_args={
-            '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
-            '--BUCKET_STREAMING': f"s3://{bucket_name}/raw-streaming/olist_events/",
-            '--BUCKET_GOLD': f"s3://{bucket_name}/gold"
-        },
-        wait_for_completion=True,
-        deferrable=False,
-    )
 
     # EXTRA CREDIT: Auditoría de Calidad Independiente
     # Brinda visibilidad directa del estado DQ en la UI de Airflow
@@ -200,5 +187,5 @@ with DAG(
     )
 
     # 4. ORQUESTACIÓN SECUENCIAL LÓGICA (Shift-Left Integration)
-    [sync_postgres_to_s3, sync_api_to_s3] >> process_raw_to_silver >> dq_audit_silver >> process_silver_to_gold
-    process_silver_to_gold >> [speed_layer_process, delta_maintenance]
+    [sync_postgres_to_s3, sync_api_to_s3] >> process_raw_to_silver >> dq_audit_silver >> speed_layer_process >> process_silver_to_gold
+    process_silver_to_gold >> delta_maintenance

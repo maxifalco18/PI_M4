@@ -22,6 +22,7 @@ build/
 aws_credentials
 *.pem
 *.key
+pi-m4-ec2-key.pem
 
 # === Secrets / Configs sensibles ===
 secrets.yml
