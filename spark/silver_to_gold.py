@@ -10,6 +10,7 @@ from awsglue.utils import getResolvedOptions
 from delta.tables import DeltaTable
 
 from src.transformations.gold import (
+    unify_lambda_orders,
     transform_sales_by_category,
     transform_sales_by_payment,
     transform_customer_segmentation,
@@ -23,7 +24,8 @@ try:
     args = getResolvedOptions(sys.argv, [
         'JOB_NAME', 
         'BUCKET_SILVER', 
-        'BUCKET_GOLD'
+        'BUCKET_GOLD',
+        'BUCKET_STREAMING'
     ])
 
     sc = SparkContext()
@@ -38,6 +40,7 @@ try:
 
     bucket_silver = args['BUCKET_SILVER']
     bucket_gold = args['BUCKET_GOLD']
+    bucket_streaming = args['BUCKET_STREAMING']
 
     print("Iniciando procesamiento a capa GOLD...")
 
@@ -50,9 +53,21 @@ try:
     df_items = spark.read.parquet(f"{bucket_silver}/fact_order_items/")
     df_products = spark.read.parquet(f"{bucket_silver}/dim_products/")
     df_payments = spark.read.parquet(f"{bucket_silver}/fact_payments/")
-    df_orders = spark.read.parquet(f"{bucket_silver}/fact_orders/")
+    df_orders_batch = spark.read.parquet(f"{bucket_silver}/fact_orders/")
 
-    # 3. TRANSFORMATIONS (OBTs)
+    # 3. READING STREAMING LAYER (Speed)
+    # ──────────────────────────────────────────────────────────────────────────────
+    try:
+        df_streaming = spark.read.parquet(f"{bucket_streaming}/olist_events/")
+    except Exception as e:
+        print(f"No streaming data found or error reading: {e}")
+        df_streaming = None
+
+    # 4. UNIFY LAMBDA ARCHITECTURE
+    # ──────────────────────────────────────────────────────────────────────────────
+    df_orders = unify_lambda_orders(df_orders_batch, df_streaming)
+
+    # 5. TRANSFORMATIONS (OBTs)
     # ──────────────────────────────────────────────────────────────────────────────
     
     # Pre-calculamos order_value desde fact_payments (Evita error de columna faltante en fact_orders)
