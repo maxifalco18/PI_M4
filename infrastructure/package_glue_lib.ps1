@@ -13,7 +13,7 @@ Write-Host "Empaquetando la librería '$SourceDir'..." -ForegroundColor Cyan
 if (Test-Path $ZipFile) { Remove-Item $ZipFile }
 
 # Crear el nuevo zip (Recursivo)
-Compress-Archive -Path "$SourceDir\*" -DestinationPath $ZipFile -Force
+Compress-Archive -Path "$SourceDir" -DestinationPath $ZipFile -Force
 
 Write-Host "Cargando librería a S3: $S3Path..."
 aws s3 cp $ZipFile $S3Path

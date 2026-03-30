@@ -9,18 +9,25 @@ if parent_dir not in sys.path:
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, expr
+from awsglue.utils import getResolvedOptions
 from src.transformations.streaming import transform_speed_layer
 
-if len(sys.argv) < 3:
-    print("Usage: processed_streaming_job.py <s3_raw_path> <s3_processed_path> <checkpoint_path>")
-    sys.exit(1)
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME',
+    's3_raw_path',
+    's3_processed_path',
+    'checkpoint_path',
+    'extra-py-files'
+])
 
-raw_path = sys.argv[1]
-processed_path = sys.argv[2]
-checkpoint_path = sys.argv[3]
+raw_path = args['s3_raw_path']
+processed_path = args['s3_processed_path']
+checkpoint_path = args['checkpoint_path']
 
 spark = SparkSession.builder \
     .appName("OlistSpeedLayerTransformation") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
 
 # 1. Lectura de la capa RAW Streaming (Parquet)
