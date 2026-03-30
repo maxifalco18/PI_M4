@@ -25,6 +25,12 @@ def unify_lambda_orders(df_batch: DataFrame, df_streaming: DataFrame = None) -> 
       .expect_column_values_to_be_unique("order_id")
     dq.validate(halt_on_fail=True)
     
+    # Ensure order_value column is always present for safe downstream joins
+    from pyspark.sql.functions import lit
+    from pyspark.sql.types import DoubleType
+    if "order_value" not in df_deduped.columns:
+        df_deduped = df_deduped.withColumn("order_value", lit(None).cast(DoubleType()))
+        
     return df_deduped
 
 def transform_sales_by_category(df_items: DataFrame, df_products: DataFrame, df_orders: DataFrame) -> DataFrame:
@@ -52,24 +58,29 @@ def transform_sales_by_payment(df_payments: DataFrame, df_orders: DataFrame) -> 
 
 def transform_customer_segmentation(df_orders: DataFrame, df_customers: DataFrame, df_order_values: DataFrame) -> DataFrame:
     """Business logic: Customer Segmentation (RFM Basic)."""
-    df_orders_valued = df_orders.join(df_order_values, "order_id")
+    df_val = df_order_values.withColumnRenamed("order_value", "batch_order_value")
+    df_orders_valued = df_orders.join(df_val, "order_id", "left") \
+        .withColumn("final_order_value", coalesce(col("batch_order_value"), col("order_value"), lit(0.0)))
+        
     df_customer_metrics = df_orders_valued.join(df_customers, "customer_id") \
         .groupBy("customer_unique_id") \
         .agg(
             db_max("order_purchase_timestamp").alias("last_purchase_date"),
             count("order_id").alias("frequency"),
-            db_sum("order_value").alias("monetary")
+            db_sum("final_order_value").alias("monetary")
         ) \
         .withColumn("recency_days", datediff(current_date(), col("last_purchase_date")))
     return df_customer_metrics
 
 def transform_order_value_metrics(df_order_values: DataFrame, df_orders: DataFrame) -> DataFrame:
     """Business logic: Order Value Metrics."""
-    return df_orders.join(df_order_values, "order_id") \
+    df_val = df_order_values.withColumnRenamed("order_value", "batch_order_value")
+    return df_orders.join(df_val, "order_id", "left") \
+                    .withColumn("final_order_value", coalesce(col("batch_order_value"), col("order_value"), lit(0.0))) \
                     .groupBy("year", "month") \
                     .agg(
-                        avg("order_value").alias("average_ticket"),
-                        db_max("order_value").alias("max_ticket"),
-                        db_min("order_value").alias("min_ticket"),
+                        avg("final_order_value").alias("average_ticket"),
+                        db_max("final_order_value").alias("max_ticket"),
+                        db_min("final_order_value").alias("min_ticket"),
                         count("order_id").alias("total_orders")
                     )
