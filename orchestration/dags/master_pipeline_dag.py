@@ -144,7 +144,8 @@ with DAG(
             '--s3_raw_path': f"s3://{bucket_name}/raw-streaming/olist_events/",
             '--s3_processed_path': f"s3://{bucket_name}/processed-streaming/olist_events/",
             '--checkpoint_path': f"s3://{bucket_name}/checkpoints/speed_layer_trans/",
-            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip",
+            '--datalake-formats': 'delta'
         },
         wait_for_completion=True,
         verbose=True,
