@@ -1,14 +1,21 @@
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import broadcast, sum as db_sum, count, col, current_date, datediff, max as db_max, min as db_min, avg
+from pyspark.sql.functions import broadcast, sum as db_sum, count, col, current_date, datediff, max as db_max, min as db_min, avg, year as db_year, month as db_month, coalesce
 from src.components.dq.validator import DataQualityValidator
 
 def unify_lambda_orders(df_batch: DataFrame, df_streaming: DataFrame = None) -> DataFrame:
     """Unifies batch and streaming data for the Lambda architecture."""
     if df_streaming is not None:
+        if "event_timestamp" in df_streaming.columns and "order_purchase_timestamp" not in df_streaming.columns:
+             df_streaming = df_streaming.withColumn("order_purchase_timestamp", col("event_timestamp"))
         df_unified = df_batch.unionByName(df_streaming, allowMissingColumns=True)
     else:
         df_unified = df_batch
     
+    # Ensure year and month exist for streaming merged rows
+    if "year" in df_unified.columns and "order_purchase_timestamp" in df_unified.columns:
+        df_unified = df_unified.withColumn("year", coalesce(col("year"), db_year(col("order_purchase_timestamp"))))
+        df_unified = df_unified.withColumn("month", coalesce(col("month"), db_month(col("order_purchase_timestamp"))))
+        
     # Deduplication using order_id as unique key
     df_deduped = df_unified.dropDuplicates(["order_id"])
     
@@ -20,9 +27,10 @@ def unify_lambda_orders(df_batch: DataFrame, df_streaming: DataFrame = None) -> 
     
     return df_deduped
 
-def transform_sales_by_category(df_items: DataFrame, df_products: DataFrame) -> DataFrame:
+def transform_sales_by_category(df_items: DataFrame, df_products: DataFrame, df_orders: DataFrame) -> DataFrame:
     """Business logic: Sales by category and time (OBT)."""
-    df_joined = df_items.join(broadcast(df_products), "product_id")
+    df_joined = df_items.join(broadcast(df_products), "product_id") \
+                        .join(df_orders.select("order_id", "year", "month"), "order_id")
     return df_joined.groupBy("product_category_name", "year", "month") \
                     .agg(
                         db_sum("price").alias("total_revenue"),

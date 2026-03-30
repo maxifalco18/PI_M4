@@ -74,7 +74,7 @@ try:
     df_order_values = df_payments.groupBy("order_id").agg(db_sum("payment_value").alias("order_value"))
 
     # A. Sales by Category (Join Broadast con products)
-    df_sales_cat = transform_sales_by_category(df_items, df_products)
+    df_sales_cat = transform_sales_by_category(df_items, df_products, df_orders)
     df_sales_cat.write.mode("overwrite").partitionBy("year", "month") \
                 .parquet(f"{bucket_gold}/gold_sales_by_category_time/")
 
