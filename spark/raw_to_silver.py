@@ -93,10 +93,22 @@ try:
             .option("path", target_path_cust) \
             .saveAsTable("dim_customers")
     else:
+        # Lógica SCD Tipo 2: Expirar versiones viejas e Insertar nuevas
         dt = DeltaTable.forPath(spark, target_path_cust)
+        
+        # 1. Identificamos registros que ya existen para saber cuáles expirar
+        # Usamos el patrón de merge con llave nula para forzar inserción de la nueva versión
+        staged_updates = df_customers_new.alias("u") \
+            .join(dt.toDF().filter("is_current = true").alias("t"), "customer_id", "inner") \
+            .select("u.*") \
+            .withColumn("merge_id", lit(None)) \
+            .union(
+                df_customers_new.withColumn("merge_id", col("customer_id"))
+            )
+
         dt.alias("t").merge(
-            df_customers_new.alias("u"),
-            "t.customer_id = u.customer_id"
+            staged_updates.alias("s"),
+            "t.customer_id = s.merge_id AND t.is_current = true"
         ).whenMatchedUpdate(set = {
             "end_date": "current_date()",
             "is_current": "false"

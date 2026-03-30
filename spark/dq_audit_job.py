@@ -26,11 +26,17 @@ job.init(args['JOB_NAME'], args)
 bucket_silver = args['BUCKET_SILVER']
 
 # DQ AUDIT: DIM_CUSTOMERS (Hito 2/Extra Credit)
-df_customers = spark.read.parquet(f"{bucket_silver}/dim_customers/")
+df_customers = spark.read.format("delta").load(f"{bucket_silver}/dim_customers/")
 validator = DataQualityValidator(df_customers, "AUDIT_CUSTOMERS")
-validator.expect_column_values_to_not_be_null("customer_id") \
-         .expect_column_values_to_be_unique("customer_id")
+validator.expect_column_values_to_not_be_null("customer_id")
+
+# Para SCD Tipo 2, la unicidad solo aplica a registros activos
+df_customers_current = df_customers.filter("is_current = true")
+validator_current = DataQualityValidator(df_customers_current, "AUDIT_CUSTOMERS_CURRENT")
+validator_current.expect_column_values_to_be_unique("customer_id")
+
 validator.validate(halt_on_fail=True)
+validator_current.validate(halt_on_fail=True)
 
 # DQ AUDIT: FACT_ORDERS
 df_orders = spark.read.parquet(f"{bucket_silver}/fact_orders/")
