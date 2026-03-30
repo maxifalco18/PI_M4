@@ -134,12 +134,3 @@ df_reviews.write.mode("overwrite") \
 
 job.commit()
 print("¡Capa SILVER terminada exitosamente!")
-
-# DIM_PRODUCTS
-try:
-    spark.read.parquet(f"{INPUT}/olist_products/").write.mode("overwrite").parquet(f"{OUTPUT}/dim_products/")
-    print("dim_products OK")
-except Exception as e: print(f"Error dim_products: {e}")
-
-job.commit()
-print("Finalizado!")

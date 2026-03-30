@@ -122,7 +122,8 @@ with DAG(
         aws_conn_id='aws_default', 
         script_args={
             '--BUCKET_IN': f"s3://{bucket_name}/raw/batch",
-            '--BUCKET_OUT': f"s3://{bucket_name}/processed/batch"
+            '--BUCKET_OUT': f"s3://{bucket_name}/processed/batch",
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
         },
         wait_for_completion=True,
         deferrable=False,
@@ -139,7 +140,8 @@ with DAG(
         script_args={
             '--s3_raw_path': f"s3://{bucket_name}/raw-streaming/olist_events/",
             '--s3_processed_path': f"s3://{bucket_name}/processed-streaming/olist_events/",
-            '--checkpoint_path': f"s3://{bucket_name}/checkpoints/speed_layer_trans/"
+            '--checkpoint_path': f"s3://{bucket_name}/checkpoints/speed_layer_trans/",
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
         },
         wait_for_completion=True,
         deferrable=False,
@@ -155,6 +157,7 @@ with DAG(
         aws_conn_id='aws_default',
         script_args={
             '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
         },
         wait_for_completion=True,
         deferrable=False,
@@ -166,7 +169,8 @@ with DAG(
         region_name='us-east-1',
         aws_conn_id='aws_default',
         script_args={
-            '--s3_gold_path_prefix': f"s3://{bucket_name}/gold/"
+            '--s3_gold_path_prefix': f"s3://{bucket_name}/gold/",
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
         },
         wait_for_completion=True,
         deferrable=False,
@@ -180,7 +184,8 @@ with DAG(
         script_args={
             '--BUCKET_SILVER': f"s3://{bucket_name}/processed/batch",
             '--BUCKET_STREAMING': f"s3://{bucket_name}/processed-streaming",
-            '--BUCKET_GOLD': f"s3://{bucket_name}/gold"
+            '--BUCKET_GOLD': f"s3://{bucket_name}/gold",
+            '--extra-py-files': f"s3://{bucket_name}/scripts/lib/src.zip"
         },
         wait_for_completion=True,
         deferrable=False,
