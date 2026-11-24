@@ -1,0 +1,75 @@
+================================================================================
+GUÍA PASO A PASO - HITO 3: INGESTA BATCH (AIRBYTE)
+================================================================================
+
+En esta fase conectaremos nuestras fuentes de datos (PostgreSQL y una API pública)
+para extraer la información y guardarla en nuestro Data Lake (S3) en la capa Raw.
+Usaremos Airbyte Cloud (capa gratuita) para no saturar nuestra EC2.
+
+--------------------------------------------------------------------------------
+PASO 1: CREAR CUENTA Y WORKSPACE EN AIRBYTE CLOUD
+--------------------------------------------------------------------------------
+1. Entra a https://airbyte.com y regístrate en "Airbyte Cloud" (es gratis).
+2. Crea tu primer Workspace (puedes llamarlo "PI_M4_Henry").
+
+--------------------------------------------------------------------------------
+PASO 2: CONFIGURAR EL DESTINO (S3 DATA LAKE)
+--------------------------------------------------------------------------------
+Airbyte necesita saber DÓNDE guardar los datos.
+
+1. En el menú izquierdo, ve a **Destinations** -> **+ New destination**.
+2. Busca y selecciona **S3**.
+3. Configura los siguientes campos:
+   - **Destination name**: S3_DataLake_Raw
+   - **S3 Bucket Name**: pi-m4-datalake-maxi (El tuyo)
+   - **S3 Bucket Path**: raw  (Muy importante poner "raw" para que guarde en esa carpeta)
+   - **S3 Region**: us-east-1
+   - **Format**: Parquet (¡Clave para el rendimiento y la evaluación!)
+   - **Authentication**: Selecciona "IAM Role" y pon el ARN de tu rol (arn:aws:iam::010659610718:user/maxi) o usa HMAC (Access Key / Secret Key) si tienes credenciales estáticas creadas para Airbyte. *Nota: Si usas IAM Role, necesitas asegurarte que Airbyte Cloud confíe en tu cuenta de AWS. A veces es más rápido generar unas Access/Secret keys solo para Airbyte.*
+
+4. Haz clic en "Set up destination" y espera a que la prueba pase en verde.
+
+--------------------------------------------------------------------------------
+PASO 3: CONFIGURAR ORIGEN 1 - POSTGRESQL
+--------------------------------------------------------------------------------
+1. Ve a **Sources** -> **+ New source**.
+2. Selecciona **PostgreSQL**.
+3. Configúralo con las credenciales que tienes en tu archivo `.env`:
+   - Host: changeme_your_supabase_host (reemplaza con el real que tengas)
+   - Port: 6543
+   - DB Name: postgres
+   - User: changeme_your_readonly_user
+   - Password: changeme_your_password
+   - SSL Modes: require 
+4. Haz clic en "Set up source".
+
+--------------------------------------------------------------------------------
+PASO 4: CONFIGURAR ORIGEN 2 - API PÚBLICA (CLIMA/GEOGRAFÍA)
+--------------------------------------------------------------------------------
+1. Ve a **Sources** -> **+ New source**.
+2. Busca "File" o "HTTP" (si usas la API genérica HTTP, o "File" si vas a leer el JSON directo desde una URL).
+3. Configúralo apuntando a la URL del JSON provista en las consignas.
+4. Dataset Name: `api_weather` (o el que corresponda).
+5. Format: JSON.
+
+--------------------------------------------------------------------------------
+PASO 5: CONFIGURAR LAS CONEXIONES (CONNECTIONS)
+--------------------------------------------------------------------------------
+Ahora conectamos Origen -> Destino.
+
+1. Ve a **Connections** -> **+ New connection**.
+2. Selecciona origen: PostgreSQL. Selecciona destino: S3_DataLake_Raw.
+3. Schedule: Ponlo en "Manual" por ahora (Airflow será quien lo dispare luego).
+4. Sync mode: Elige "Incremental | Append" para las tablas de ventas, o "Full Refresh | Overwrite" para tablas pequeñas de dimensiones.
+5. Haz clic en "Set up connection".
+6. Inmediatamente después, dale al botón "Sync now" para hacer la primera extracción de prueba.
+
+7. (Repite el proceso creando otra conexión para la API pública hacia S3).
+
+--------------------------------------------------------------------------------
+PASO 6: VERIFICAR EN AWS
+--------------------------------------------------------------------------------
+1. Ve a la consola de AWS -> S3 -> pi-m4-datalake-maxi -> raw.
+2. Deberías ver carpetas nuevas con los nombres de tus tablas de Postgres y los archivos en formato .parquet.
+
+¡Cuando llegues aquí, avísame y conectamos Airbyte con Airflow!

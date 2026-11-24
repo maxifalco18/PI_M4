@@ -1,0 +1,79 @@
+================================================================================
+GUIA MAESTRA PARA DEMO FINAL — PIM4 DATA PLATFORM 
+================================================================================
+
+Esta guía resume todos los pasos necesarios para realizar una demostración exitosa
+del proyecto PIM4, cubriendo desde la infraestructura hasta el Speed Layer.
+
+--------------------------------------------------------------------------------
+1. ESTRUCTURA DEL DATA LAKE (Hito 1)
+--------------------------------------------------------------------------------
+Archivo clave: docs/sql/lake_formation_setup.sql (si aplica)
+Punto a mostrar: Consola de AWS S3 y Lake Formation.
+
+• Mostrar Bucket: s3://pi-m4-datalake-maxi/
+• Capas Medallion: 
+    - /raw (Ingesta cruda)
+    - /processed (Silver - Datos limpios)
+    - /gold (Negocio - Tablas OBT/Agregadas)
+• Gobernanza: 
+    - Registro en Lake Formation para control de acceso fino.
+    - KMS Enabled para cifrado en reposo.
+
+--------------------------------------------------------------------------------
+2. ORQUESTACIÓN Y ENTORNO (Hito 2)
+--------------------------------------------------------------------------------
+Archivos clave: validate_demo.py, orchestration/dags/master_pipeline_dag.py
+Punto a mostrar: Airflow UI (http://100.31.44.224:8080)
+
+• Ejecutar validación inicial:
+  $ python validate_demo.py
+  (Debe mostrar todos los checks en [OK])
+
+• Mostrar DAG 'pi_m4_master_datalake_pipeline':
+  Visualizar el flujo: Raw -> Silver -> Gold + Data Quality Audit.
+
+--------------------------------------------------------------------------------
+3. BATCH PIPELINE & DATA QUALITY (Hito 3)
+--------------------------------------------------------------------------------
+Archivos clave: spark/raw_to_silver.py, src/components/dq/validator.py
+Punto a mostrar: Registros de Data Quality en Airflow o Logs de Spark.
+
+• Proceso: Mapeo de S3 Raw a S3 Processed mediante PySpark.
+• Calidad: El DQ Auditor verifica nulos y claves primarias antes de la Capa Gold.
+
+--------------------------------------------------------------------------------
+4. CAPA GOLD & ANALYTICS (Hito 4)
+--------------------------------------------------------------------------------
+Archivo clave: spark/silver_to_gold.py
+Punto a mostrar: S3 /gold/ prefixes y consultas en Athena (opcional).
+
+• Tablas de Negocio (OBT):
+    - gold_sales_by_category_time: Agregado por categoría de producto.
+    - gold_sales_by_region: Ventas por estado (Customer State).
+    - gold_sales_by_payment: Ventas por método de pago.
+
+--------------------------------─-----------------------------------------------
+5. SPEED LAYER & LAMBDA (Hito 5)
+--------------------------------─-----------------------------------------------
+Archivos clave: spark/kafka_producer_sim.py, spark/processed_streaming_job.py
+Punto a mostrar: Terminal de comandos enviando eventos en vivo.
+
+• Ejecutar Simulador de Kafka:
+  $ python spark/kafka_producer_sim.py
+  (Mostrará 10 eventos enviados al broker en la EC2)
+
+• Mostrar Unificación Lambda:
+  En la capa Gold, se unifican los datos históricos (Batch) con los últimos
+  eventos de Kafka (Streaming) mediante la función `unify_lambda_orders`.
+
+--------------------------------─-----------------------------------------------
+6. CI/CD & INDUSTRIALIZACIÓN (Extra)
+--------------------------------─-----------------------------------------------
+• Mostrar: .github/workflows/deploy_glue_jobs.yml
+• Mostrar: infraestructura/package_glue_lib.ps1
+  (Cómo empaquetamos la lógica modular en src.zip para AWS Glue)
+
+================================────────────────────────────────────────────────
+FIN DE LA GUÍA — ¡EXITOS EN LA DEMO!
+================================────────────────────────────────────────────────
