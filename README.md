@@ -26,6 +26,84 @@ The PIM4 Data Lake is an industrial-scale data platform designed to bridge the g
 
 ## 2. Architecture
 
+```mermaid
+flowchart LR
+    subgraph SRC["Sources"]
+        PG[("PostgreSQL<br/>(Olist)")]
+        API["Public REST API<br/>(OpenWeatherMap)"]
+        APP(("App events"))
+    end
+
+    subgraph ING["Ingestion"]
+        AIR["Airbyte Cloud<br/>(batch)"]
+        KAFKA{{"Apache Kafka<br/>on EC2"}}
+        SSC["Spark Structured<br/>Streaming consumer"]
+    end
+
+    subgraph LAKE["Amazon S3 Data Lake — Medallion"]
+        RAW_B["Raw / Bronze<br/>batch"]
+        RAW_S["Raw / Bronze<br/>streaming"]
+        SIL_B["Silver batch<br/>Delta Lake · SCD2"]
+        SIL_S["Silver streaming<br/>Parquet"]
+        GOLD["Gold<br/>Delta Lake · OBT"]
+    end
+
+    subgraph PROC["Processing — AWS Glue (PySpark)"]
+        J1["raw_to_silver<br/>schema enforcement · SCD Type 2"]
+        J2["processed_streaming<br/>enrichment"]
+        J3["silver_to_gold<br/>Lambda unification"]
+        J4["dq_audit<br/>data quality"]
+    end
+
+    subgraph SERVE["Governance & Serving"]
+        CAT[("Glue Data Catalog")]
+        LF["Lake Formation · KMS"]
+        ATH["Amazon Athena"]
+        QS["Amazon QuickSight"]
+    end
+
+    ORCH[["Apache Airflow on EC2 (Docker)<br/>+ Slack alerts"]]
+    CICD[["GitHub Actions<br/>CI/CD"]]
+
+    PG --> AIR
+    API --> AIR
+    AIR --> RAW_B
+    APP --> KAFKA --> SSC --> RAW_S
+
+    RAW_B --> J1 --> SIL_B
+    RAW_S --> J2
+    SIL_B -->|"dimension join"| J2
+    J2 --> SIL_S
+    SIL_B --> J3
+    SIL_S --> J3
+    J3 --> GOLD
+    J1 -.-> J4
+
+    GOLD --> CAT --> ATH --> QS
+    LF -.->|"permissions"| CAT
+
+    ORCH -.->|"triggers & monitors"| AIR
+    ORCH -.-> J1
+    ORCH -.-> J2
+    ORCH -.-> J3
+    CICD -.->|"deploys DAGs"| ORCH
+    CICD -.->|"deploys jobs"| PROC
+```
+
+> Batch (slow lane) and streaming (speed layer) paths converge in the Gold layer, where `silver_to_gold.py` deduplicates by `order_id` to serve a single analytical view. A more detailed design write-up is available in [`docs/Arquitectura_PIM4.md`](docs/Arquitectura_PIM4.md).
+
+### Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Ingestion | Airbyte Cloud, Apache Kafka |
+| Storage | Amazon S3, Delta Lake, Parquet |
+| Processing | AWS Glue, PySpark, Spark Structured Streaming |
+| Orchestration | Apache Airflow (Docker on EC2) |
+| Governance | Glue Data Catalog, Lake Formation, KMS |
+| Serving | Amazon Athena, Amazon QuickSight |
+| Quality & CI/CD | Custom DQ framework, pytest, GitHub Actions |
+
 ### Components
 - **Orchestration**: **Apache Airflow** (deployed in Docker on AWS EC2) coordinates the entire lifecycle.
 - **Ingestion**: **Airbyte Cloud** for relational and API sources; **Apache Kafka** for streaming events.
@@ -67,4 +145,19 @@ The PIM4 Data Lake is an industrial-scale data platform designed to bridge the g
 - **Security**: Access is controlled via IAM roles; sensitive data is encrypted at rest using AWS KMS.
 
 ---
-*Created by the Senior Data Engineering Team*
+
+## 5. Repository Structure
+
+```
+├── .github/workflows/     # CI/CD: deploy Airflow DAGs and Glue jobs
+├── orchestration/dags/    # Airflow DAGs (master pipeline + backfill)
+├── spark/                 # Glue/Spark jobs: raw→silver, silver→gold, streaming, DQ audit, Delta maintenance
+├── src/                   # Shared library: transformations, raw validator, DQ framework
+├── tests/                 # pytest unit tests for Silver and Gold logic
+├── infrastructure/        # AWS setup scripts: KMS, Lake Formation, Athena views, crawlers, lifecycle
+├── docs/                  # Architecture design, technical specs, runbook, implementation guides
+└── docker-compose.yaml    # Local / EC2 Airflow stack
+```
+
+---
+*Author: [Maximiliano Falco](https://www.linkedin.com/in/maximilianofalco/) — Henry Data Engineering Bootcamp, Module 4 integration project.*
