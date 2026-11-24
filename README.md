@@ -1,5 +1,12 @@
 # PIM4: Production-Grade Cloud Data Lake
 
+[![Tests](https://github.com/maxifalco18/PI_M4/actions/workflows/tests.yml/badge.svg)](https://github.com/maxifalco18/PI_M4/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![PySpark](https://img.shields.io/badge/PySpark-3.5-E25A1C?logo=apachespark&logoColor=white)
+![Airflow](https://img.shields.io/badge/Airflow-2.7-017CEE?logo=apacheairflow&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-Glue%20%7C%20S3%20%7C%20Athena-FF9900?logo=amazonwebservices&logoColor=white)
+![Delta Lake](https://img.shields.io/badge/Delta%20Lake-SCD2-00ADD4)
+
 Welcome to the **PIM4 Data Lake** project. This repository contains the end-to-end implementation of a highly scalable, medallion-based data pipeline designed for business intelligence and telemetry event analysis using a Lambda Architecture.
 
 ---
@@ -158,6 +165,36 @@ flowchart LR
 ├── docs/                  # Architecture design, technical specs, runbook, implementation guides
 └── docker-compose.yaml    # Local / EC2 Airflow stack
 ```
+
+---
+
+## 6. How to Run
+
+### Unit tests (local, no AWS needed)
+
+Requires Python 3.11 and Java 17 (for the local SparkSession).
+
+```bash
+pip install pyspark==3.5.1 pytest
+python -m pytest -v
+```
+
+The same tests run on every push and pull request via [GitHub Actions](.github/workflows/tests.yml).
+
+### Airflow (local or EC2)
+
+```bash
+docker compose up -d
+# Airflow UI: http://localhost:8080
+```
+
+DAGs live in `orchestration/dags/` (`master_pipeline_dag.py` for the daily run, `backfill_pipeline_dag.py` for reprocessing past periods).
+
+### AWS deployment
+
+1. Provision the base resources with the scripts in `infrastructure/` (S3 buckets, KMS, Lake Formation, crawlers, Athena views).
+2. Push to the `dev` branch: the workflows in `.github/workflows/` deploy the DAGs to EC2 and the Glue jobs to AWS. They need the repository secrets used in those workflows (EC2 host, user and SSH key, AWS credentials).
+3. Day-to-day operation and troubleshooting: see the [operational runbook](docs/operational_runbook.md).
 
 ---
 *Author: [Maximiliano Falco](https://www.linkedin.com/in/maximilianofalco/) — Henry Data Engineering Bootcamp, Module 4 integration project.*
